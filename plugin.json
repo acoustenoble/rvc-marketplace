@@ -1,7 +1,0 @@
-{
-  "name": "rvc",
-  "version": "0.1.0",
-  "description": "Outils metier RVC Commissaire de justice et RVC Immobilier : constats, etats des lieux, inventaires, constats drone et affichage, mandats de gestion, estimations immobilieres, ecritures comptables et traitement des candidatures locataires.",
-  "author": { "name": "RVC" },
-  "keywords": ["commissaire-de-justice", "immobilier", "constat", "gestion-locative", "rvc"]
-}
