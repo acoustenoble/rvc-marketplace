@@ -1,0 +1,211 @@
+{
+  "meta": {
+    "date": "30/05/2026",
+    "date_longue": "samedi 30 mai 2026",
+    "client": "SCI TROIS D",
+    "ville": "SAINT-JAMES",
+    "intro": "Profondément implantés localement, nous connaissons votre quartier. La juste connaissance de la valeur de votre bien nous permet d'établir la meilleure stratégie de commercialisation et d'optimiser les délais de vente.",
+    "agence": {
+      "nom": "RVC IMMOBILIER",
+      "adresse": "12 Place Carnot, 50300 AVRANCHES",
+      "tel": "02 33 58 08 41",
+      "email": "contact@rvc-immobilier.fr",
+      "description": "RVC IMMOBILIER est le département immobilier d'une étude de commissaires de justice présente sur trois sites : Avranches, Saint-Pierre et Vire. Nous gérons, administrons et évaluons les biens avec la rigueur, l'indépendance et l'impartialité propres aux officiers ministériels."
+    }
+  },
+  "bien": {
+    "type": "Maison",
+    "titre": "Maison 5 pièces à SAINT-JAMES",
+    "adresse": "3 Rue des Lilas",
+    "cp": "50240",
+    "commune": "SAINT-JAMES",
+    "insee": "50487",
+    "surface_carrez": 95,
+    "terrain": 500,
+    "pieces": 5,
+    "chambres": 3,
+    "annee": 2009,
+    "dpe": "D",
+    "ges": "D",
+    "etat": "Bon état général",
+    "occupation": "Libre de toute occupation",
+    "charges_annuelles": 1200,
+    "equipements": [
+      "Chauffage : pompe à chaleur",
+      "Double vitrage PVC",
+      "Cuisine aménagée et équipée",
+      "Garage et combles aménageables"
+    ],
+    "annexes": [
+      {
+        "designation": "Combles utilisables",
+        "surface": 80
+      }
+    ],
+    "commentaire": "Votre bien correspond au type majoritairement présent sur le secteur. Son nombre de pièces est supérieur à la moyenne constatée et sa construction (2009) est plus récente que les autres biens du quartier.",
+    "comparaison": {
+      "items": [
+        {
+          "label": "Nombre de pièces",
+          "bien": 5,
+          "secteur": 4,
+          "unite": ""
+        },
+        {
+          "label": "Surface habitable",
+          "bien": 95,
+          "secteur": 82,
+          "unite": " m²"
+        },
+        {
+          "label": "Année de construction",
+          "bien": 2009,
+          "secteur": 1955,
+          "unite": ""
+        }
+      ],
+      "commentaire": "Plus grand, plus récent et avec une pièce de plus que la moyenne du secteur : autant d'atouts qui soutiennent le positionnement de prix."
+    },
+    "photos": []
+  },
+  "points_interet": {
+    "rayon_km": 6.9,
+    "administration": [
+      "Mairie de Saint-James",
+      "Relais Poste — rue Fauconnière"
+    ],
+    "enseignement": [
+      "École primaire privée Immaculée-Conception",
+      "Collège Immaculée Conception",
+      "Collège Le Clos Tardif (SEGPA)"
+    ],
+    "transports": [
+      "Arrêt de bus « Mairie »",
+      "Ligne Saint-Georges-de-Reintembault / Place A. Dubois"
+    ],
+    "sante": [
+      "MAS Saint-James",
+      "EANM Saint-James",
+      "Résidence Domitys Nord-Ouest"
+    ],
+    "commerces": [
+      "Supermarché et commerces de centre-bourg",
+      "Pharmacie"
+    ],
+    "commentaire": "votre bien dispose d'un emplacement intéressant avec un accès aux services d'administration, d'enseignement, de transports et de santé. Ces éléments seront probablement pris en compte par les futurs acquéreurs.",
+    "carte": "examples/carte-demo.jpg"
+  },
+  "comparables_vente": [
+    {
+      "type": "Maison",
+      "ville": "SAINT-JAMES (50240)",
+      "surface": 106,
+      "pieces": 5,
+      "jours": 80,
+      "prix": 167000,
+      "prix_m2": 1575,
+      "note": "Maison de 5 pièces à Saint-James, 106 m². Bien comparable proposé à la vente."
+    },
+    {
+      "type": "Maison",
+      "ville": "SAINT-JAMES (50240)",
+      "surface": 103,
+      "pieces": 5,
+      "jours": 80,
+      "prix": 159000,
+      "prix_m2": 1544,
+      "note": "Maison de 5 pièces à Saint-James, 103 m²."
+    }
+  ],
+  "comparables_vendus": [
+    {
+      "type": "Maison",
+      "ville": "SAINT-JAMES (50240)",
+      "surface": 133,
+      "pieces": 5,
+      "terrain": 699,
+      "date": "31/03/2025",
+      "prix": 120000,
+      "prix_m2": 902
+    },
+    {
+      "type": "Maison",
+      "ville": "SAINT-JAMES (50240)",
+      "surface": 111,
+      "pieces": 4,
+      "terrain": 550,
+      "date": "05/03/2025",
+      "prix": 150000,
+      "prix_m2": 1351
+    },
+    {
+      "type": "Maison",
+      "ville": "SAINT-JAMES (50240)",
+      "surface": 133,
+      "pieces": 4,
+      "terrain": 600,
+      "date": "30/04/2025",
+      "prix": 225000,
+      "prix_m2": 1692
+    }
+  ],
+  "socio": {
+    "departement": {
+      "population": 499529,
+      "foyers": 221502,
+      "actifs": 221527,
+      "retraites": 41,
+      "revenu_median": 24706
+    },
+    "code_postal": {
+      "population": 9028,
+      "foyers": 3980,
+      "actifs": 3937,
+      "retraites": 41,
+      "revenu_median": 23871
+    },
+    "secteur": {
+      "population": 4890,
+      "foyers": 2202,
+      "actifs": 2030,
+      "retraites": 47,
+      "revenu_median": 21362
+    },
+    "commentaire": "Ce secteur est majoritairement constitué de personnes seules, avec une part importante de 60-74 ans. Les actifs sont en général des ouvriers, avec un revenu annuel médian de 21 362 €."
+  },
+  "marche": {
+    "commune": {
+      "libelle": "Saint-James",
+      "maison_med": 1240,
+      "maison_moy": 1305,
+      "maison_nb": 351,
+      "appt_med": 2792,
+      "appt_nb": 9
+    },
+    "departement": {
+      "libelle": "Manche",
+      "maison_med": 1798,
+      "maison_moy": 1956,
+      "maison_nb": 31893,
+      "appt_med": 2148,
+      "appt_nb": 5010
+    },
+    "secteur": {},
+    "prix_offre_maison": 1200,
+    "prix_offre_appt": 2030,
+    "evol_prix_maison": 0.84,
+    "evol_prix_appt": 1.5,
+    "commentaire": "Sur ce code postal, majoritairement constitué de maisons, le marché était récemment orienté à la hausse. Le taux de négociation constaté entre prix d'affiche et prix de signature est de l'ordre de 8 %."
+  },
+  "estimation": {
+    "preambule": "Cette estimation prend en considération le fait que votre bien est déclaré comme étant libre à la vente.",
+    "prix_m2_retenu": 1240,
+    "valeur_bien": 117819,
+    "valorisation_annexes": 71891,
+    "valeur_moyenne": 188000,
+    "valeur_basse": 176000,
+    "valeur_haute": 200000,
+    "methodo": "Valeur du bâti = prix médian DVF maison du secteur (1 240 €/m²) appliqué à la surface Carrez (95 m²), ajusté de la qualité du bien (construction 2009, bon état, DPE D — supérieur au parc local ancien). Les combles utilisables (80 m²) et le terrain (500 m²) sont valorisés séparément. La fourchette ±6 % reflète l'incertitude de marché et la marge de négociation observée (~8 %).",
+    "conclusion": "Positionner votre bien au plus près de sa valeur réelle est la meilleure manière d'attirer le plus grand nombre d'acquéreurs et de potentialiser une vente au meilleur prix dans des délais maîtrisés."
+  }
+}

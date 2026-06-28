@@ -1,0 +1,698 @@
+#!/usr/bin/env python3
+"""
+build_etat_des_lieux.py — Construction du .docx final d'un état des lieux
+
+Prend en entrée :
+  - le brouillon .docx original (source)
+  - le JSON enrichi par le LLM (rubriques Sol/Murs/Plafond/Équipement/Mobilier
+    par pièce, scories nettoyées, descriptions affinées par lecture des photos)
+  - le JSON des réponses interactives (locataire, dates, statut AR, civilité
+    requérant)
+
+Produit en sortie :
+  - le .docx final, prêt à être livré
+
+Le script préserve toute la structure du brouillon (page de garde, sommaire,
+photos avec leurs liens hypertextes, footer, signature) et n'opère que les
+modifications ciblées :
+
+  1. Remplace l'introduction de la requête par le template (templates.md § 2)
+  2. Insère la section "1 Convocation" en tête des constatations
+  3. Restructure chaque pièce : titre normalisé + Sol/Murs/Plafond/Équipement
+     + Mobilier (optionnel) + photos préservées dans leur ordre d'origine
+  4. Réordonne les pièces selon la logique du métier
+  5. Reformate les sections terminales : Compteurs, Boîte aux lettres, Clés
+  6. Active la mise à jour automatique du sommaire à l'ouverture
+
+Usage :
+    python3 build_etat_des_lieux.py \\
+        --src <brouillon.docx> \\
+        --enriched <enriched.json> \\
+        --answers <answers.json> \\
+        --out <sortie.docx>
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import sys
+import zipfile
+from pathlib import Path
+from typing import Optional
+
+
+# --------------------------------------------------------------------------
+#  Constantes
+# --------------------------------------------------------------------------
+
+W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+# Marqueurs structurels du brouillon
+MARK_DEMANDE = "A LA DEMANDE DE :"
+MARK_EXPOSE = "LEQUEL M'EXPOSE CE QUI SUIT :"
+MARK_DEFERANT = "DEFERANT A CETTE REQUISITION :"
+MARK_RENDU = "ME SUIS RENDU CE JOUR :"
+MARK_CONSTAT = "J'AI PROCEDE AUX CONSTATATIONS SUIVANTES :"
+MARK_CONCLUSION = "Telles sont les constatations faites"
+
+# Ordre logique des pièces (cf. rules.md règle 8)
+PIECE_ORDER = [
+    "Entrée / Couloir",
+    "Salon",
+    "Salle à manger",
+    "Séjour",
+    "Cuisine",
+    "Séchoir",
+    "Cellier",
+    "Arrière-cuisine",
+    "Salle de bain",
+    "Salle de douche",
+    "WC",
+    "Chambre 1",
+    "Chambre 2",
+    "Chambre 3",
+    "Chambre 4",
+    "Chambre 5",
+    "Bureau",
+    "Balcon",
+    "Loggia",
+    "Terrasse",
+    "Placard",
+    "Dressing",
+    "Cave",
+    "Garage",
+]
+
+# Mois en lettres pour la conversion de date
+MOIS_LETTRES = {
+    "01": "JANVIER", "02": "FEVRIER", "03": "MARS", "04": "AVRIL",
+    "05": "MAI", "06": "JUIN", "07": "JUILLET", "08": "AOUT",
+    "09": "SEPTEMBRE", "10": "OCTOBRE", "11": "NOVEMBRE", "12": "DECEMBRE",
+}
+
+# Jours en lettres
+JOURS_LETTRES = {
+    1: "PREMIER", 2: "DEUX", 3: "TROIS", 4: "QUATRE", 5: "CINQ",
+    6: "SIX", 7: "SEPT", 8: "HUIT", 9: "NEUF", 10: "DIX",
+    11: "ONZE", 12: "DOUZE", 13: "TREIZE", 14: "QUATORZE", 15: "QUINZE",
+    16: "SEIZE", 17: "DIX-SEPT", 18: "DIX-HUIT", 19: "DIX-NEUF", 20: "VINGT",
+    21: "VINGT-ET-UN", 22: "VINGT-DEUX", 23: "VINGT-TROIS", 24: "VINGT-QUATRE",
+    25: "VINGT-CINQ", 26: "VINGT-SIX", 27: "VINGT-SEPT", 28: "VINGT-HUIT",
+    29: "VINGT-NEUF", 30: "TRENTE", 31: "TRENTE-ET-UN",
+}
+
+
+# --------------------------------------------------------------------------
+#  Helpers de génération XML
+# --------------------------------------------------------------------------
+
+def xml_escape(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def p_para(text: str, style: str = "HOParagraphe", bold: bool = False,
+           jc: Optional[str] = None) -> str:
+    """Construit un paragraphe Word simple."""
+    rpr = "<w:rPr>"
+    if bold:
+        rpr += "<w:b/>"
+    rpr += "</w:rPr>"
+    ppr = f'<w:pPr><w:pStyle w:val="{style}"/>'
+    if jc:
+        ppr += f'<w:jc w:val="{jc}"/>'
+    ppr += "</w:pPr>"
+    return (
+        f"<w:p>{ppr}"
+        f"<w:r>{rpr}<w:t xml:space=\"preserve\">{xml_escape(text)}</w:t></w:r>"
+        f"</w:p>"
+    )
+
+
+def p_heading1(text: str) -> str:
+    """Construit un titre de pièce (style Heading1), en gras et souligné."""
+    return (
+        f'<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>'
+        f'<w:r><w:rPr><w:b/><w:u w:val="single"/></w:rPr>'
+        f'<w:t xml:space="preserve">{xml_escape(text)}</w:t></w:r>'
+        f"</w:p>"
+    )
+
+
+def p_rubrique(label: str, value: str = "", style: str = "HOParagraphe") -> str:
+    """Libellé de rubrique (Sol :, Murs :, Plafond :, Équipement :, Mobilier :)
+    en gras, valeur descriptive en normal."""
+    ppr = f'<w:pPr><w:pStyle w:val="{style}"/><w:jc w:val="both"/></w:pPr>'
+    label_run = (
+        f'<w:r><w:rPr><w:b/></w:rPr>'
+        f'<w:t xml:space="preserve">{xml_escape(label)}</w:t></w:r>'
+    )
+    value_run = ""
+    if value:
+        value_run = f'<w:r><w:t xml:space="preserve">{xml_escape(value)}</w:t></w:r>'
+    return f"<w:p>{ppr}{label_run}{value_run}</w:p>"
+
+
+def p_bullet(text: str) -> str:
+    """Construit un paragraphe avec puce ●."""
+    return p_para(f"● {text}")
+
+
+def date_en_lettres(date_str: str) -> str:
+    """Convertit JJ/MM/AAAA en 'L'AN ANNEE_LETTRES ET LE JOUR_LETTRES'."""
+    m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", date_str.strip())
+    if not m:
+        return f"L'AN ... ET LE ... ({date_str})"
+    jour, mois, annee = m.group(1), m.group(2), m.group(3)
+    jour_int = int(jour)
+    annee_int = int(annee)
+    annee_lettres = annee_to_lettres(annee_int).upper()
+    jour_lettres = JOURS_LETTRES.get(jour_int, str(jour_int))
+    mois_lettres = MOIS_LETTRES.get(mois.zfill(2), mois.upper())
+    return f"L'AN {annee_lettres} ET LE {jour_lettres} {mois_lettres}"
+
+
+def annee_to_lettres(n: int) -> str:
+    """Convertit une année en lettres : 2026 → DEUX-MILLE-VINGT-SIX."""
+    if n == 2026:
+        return "DEUX-MILLE-VINGT-SIX"
+    if n == 2027:
+        return "DEUX-MILLE-VINGT-SEPT"
+    if n == 2028:
+        return "DEUX-MILLE-VINGT-HUIT"
+    # Cas général (très simplifié — à étoffer si besoin)
+    millier = n // 1000
+    reste = n % 1000
+    parts = []
+    if millier == 2:
+        parts.append("DEUX-MILLE")
+    elif millier == 1:
+        parts.append("MILLE")
+    else:
+        parts.append(str(millier).upper() + "-MILLE")
+    if reste >= 20:
+        dizaine_unite = reste % 100
+        centaine = reste // 100
+        cent_str = ""
+        if centaine == 1:
+            cent_str = "CENT"
+        elif centaine > 1:
+            cent_str = str(centaine).upper() + "-CENT"
+        if cent_str:
+            parts.append(cent_str)
+        if dizaine_unite > 0:
+            parts.append(JOURS_LETTRES.get(dizaine_unite, str(dizaine_unite)))
+    elif reste > 0:
+        parts.append(JOURS_LETTRES.get(reste, str(reste)))
+    return "-".join(parts)
+
+
+# --------------------------------------------------------------------------
+#  Génération des blocs textuels (intro, convocation, conclusion)
+# --------------------------------------------------------------------------
+
+def build_intro(answers: dict, brouillon: dict) -> str:
+    """
+    Construit le paragraphe d'introduction (entre LEQUEL M'EXPOSE et DEFERANT).
+
+    Format :
+        Que [Le requérant | La requérante | La société requérante] a donné
+        à bail d'habitation principale à [identité du locataire] en date
+        du [date du bail], un logement sis [adresse complète].
+
+        Que je suis mandaté pour dresser l'état des lieux [d'entrée | de sortie].
+    """
+    civilite = answers.get("requerant_civilite") or detect_requerant_civilite(
+        brouillon.get("bailleur_raw", "")
+    )
+    if civilite == "morale":
+        sujet = "la société requérante"
+    elif civilite == "femme":
+        sujet = "la requérante"
+    else:
+        sujet = "le requérant"
+
+    locataire = answers["locataire"]["identite_complete"]
+    date_bail = answers["bail"]["date"]
+    adresse = brouillon.get("adresse_logement") or "[ADRESSE]"
+    type_edl = answers.get("type_edl", brouillon.get("type_edl", "sortie"))
+    edl_label = "d'entrée" if type_edl == "entree" else "de sortie"
+
+    p1 = (
+        f"Que {sujet} a donné à bail d'habitation principale à "
+        f"{locataire} en date du {date_bail}, un logement sis {adresse}."
+    )
+    p2 = f"Que je suis mandaté pour dresser l'état des lieux {edl_label}."
+
+    return p_para(p1) + p_para(p2)
+
+
+def build_convocation(answers: dict) -> str:
+    """Construit la section 1 Convocation selon le statut de l'AR."""
+    conv = answers["convocation"]
+    statut = conv.get("ar_status", "pas_de_retour")
+    date_envoi = conv.get("date_envoi", "...")
+    date_ar = conv.get("ar_date", "...")
+
+    if statut == "signe":
+        phrase = (
+            f"Que le locataire a été convoqué par lettre recommandée avec "
+            f"demande d'avis de réception signée le {date_ar} et par lettre "
+            f"simple en date du {date_envoi}."
+        )
+    elif statut == "non_reclame":
+        phrase = (
+            f"Que le locataire a été convoqué par lettre recommandée avec "
+            f"demande d'avis de réception, dont le pli est revenu non "
+            f"réclamé, et par lettre simple en date du {date_envoi}."
+        )
+    else:  # pas_de_retour
+        phrase = (
+            f"Que le locataire a été convoqué par lettre recommandée avec "
+            f"demande d'avis de réception et par lettre simple en date du "
+            f"{date_envoi}."
+        )
+
+    return p_heading1("Convocation") + p_para(phrase)
+
+
+def build_piece(piece: dict) -> str:
+    """
+    Construit le bloc XML d'une pièce :
+        Titre (Heading1)
+        [Phrase d'accès]
+        Sol : ...
+        Murs : ...
+        Plafond : ...
+        Équipement : ...
+            ● ...
+        Mobilier : ... (optionnel)
+            ● ...
+        [Photos]
+    """
+    out = [p_heading1(piece["titre_normalise"])]
+
+    if piece.get("phrase_acces"):
+        out.append(p_para(piece["phrase_acces"]))
+
+    if piece.get("sol"):
+        out.append(p_rubrique("Sol : ", piece['sol']))
+    if piece.get("murs"):
+        out.append(p_rubrique("Murs : ", piece['murs']))
+    if piece.get("plafond"):
+        out.append(p_rubrique("Plafond : ", piece['plafond']))
+
+    equipement = piece.get("equipement") or []
+    if equipement:
+        out.append(p_rubrique("Équipement :"))
+        for item in equipement:
+            out.append(p_bullet(item))
+
+    mobilier = piece.get("mobilier") or []
+    if mobilier:
+        out.append(p_rubrique("Mobilier :"))
+        for item in mobilier:
+            out.append(p_bullet(item))
+
+    # Les photos sont injectées plus tard, depuis le XML source (pour
+    # préserver leur drawing XML complexe et les liens hypertextes).
+    return "".join(out)
+
+
+def build_compteurs(compteurs: dict) -> str:
+    """
+    compteurs = {
+      "electrique": {"index": "9551", "unite": "kWh"},
+      "eau_froide": {"index": "182", "unite": "m³"},
+      "eau_chaude": {"index": "167", "unite": "m³"},
+      "gaz": {"index": "...", "unite": "m³"}   # optionnel
+    }
+    """
+    out = [p_heading1("Compteurs")]
+    if "electrique" in compteurs and compteurs["electrique"]:
+        c = compteurs["electrique"]
+        out.append(p_bullet(f"Compteur électrique : {c['index']} {c['unite']}"))
+    if "eau_froide" in compteurs and compteurs["eau_froide"]:
+        c = compteurs["eau_froide"]
+        out.append(p_bullet(f"Compteur d'eau froide : {c['index']} {c['unite']}"))
+    if "eau_chaude" in compteurs and compteurs["eau_chaude"]:
+        c = compteurs["eau_chaude"]
+        out.append(p_bullet(f"Compteur d'eau chaude : {c['index']} {c['unite']}"))
+    if "gaz" in compteurs and compteurs["gaz"]:
+        c = compteurs["gaz"]
+        out.append(p_bullet(f"Compteur de gaz : {c['index']} {c['unite']}"))
+    return "".join(out)
+
+
+def build_boite(description: str) -> str:
+    out = [p_heading1("Boîte aux lettres")]
+    if description:
+        out.append(p_para(description))
+    return "".join(out)
+
+
+def build_cles(cles: list[str]) -> str:
+    out = [p_heading1("Clés")]
+    for item in cles:
+        out.append(p_bullet(item))
+    return "".join(out)
+
+
+def build_conclusion(adresse: str) -> str:
+    phrase = (
+        f"Telles sont les constatations faites ce jour au {adresse} de "
+        f"tout quoi j'ai dressé et rédigé le présent procès-verbal de "
+        f"constat, avec photographies pour servir et valoir ce que de droit."
+    )
+    sig = (
+        f"<w:p><w:pPr><w:pStyle w:val=\"HOParagraphe\"/>"
+        f"<w:jc w:val=\"right\"/></w:pPr>"
+        f"<w:r><w:rPr><w:b/></w:rPr>"
+        f"<w:t xml:space=\"preserve\">Commissaire de Justice</w:t>"
+        f"</w:r></w:p>"
+        f"<w:p><w:pPr><w:pStyle w:val=\"HOParagraphe\"/>"
+        f"<w:jc w:val=\"right\"/></w:pPr>"
+        f"<w:r><w:rPr><w:b/></w:rPr>"
+        f"<w:t xml:space=\"preserve\">Maître Antoine COUSTENOBLE</w:t>"
+        f"</w:r></w:p>"
+    )
+    return (
+        f"<w:p><w:pPr><w:pStyle w:val=\"HOParagraphe\"/>"
+        f"<w:jc w:val=\"both\"/></w:pPr>"
+        f"<w:r><w:rPr><w:b/><w:i/></w:rPr>"
+        f"<w:t xml:space=\"preserve\">{xml_escape(phrase)}</w:t>"
+        f"</w:r></w:p>"
+        + sig
+    )
+
+
+# --------------------------------------------------------------------------
+#  Détection civilité du requérant
+# --------------------------------------------------------------------------
+
+def detect_requerant_civilite(bailleur_raw: str) -> str:
+    """Retourne 'morale' / 'femme' / 'homme'."""
+    s = bailleur_raw.lower()
+    morale_markers = [
+        "sarl", "sas ", "s.a.s", "sci ", "eurl", "sasu", "oph",
+        "epic", "établissement public", "association", "société",
+        "office", "habitat", "immobilière", " sa ",
+    ]
+    if any(m in s for m in morale_markers):
+        return "morale"
+    if s.startswith("madame") or s.startswith("mme"):
+        return "femme"
+    if s.startswith("monsieur") or s.startswith("m. "):
+        return "homme"
+    return "morale"  # fallback prudent
+
+
+# --------------------------------------------------------------------------
+#  Manipulation du document.xml
+# --------------------------------------------------------------------------
+
+def find_paragraph_index_by_text(doc_xml: str, marker: str) -> Optional[tuple[int, int]]:
+    """Renvoie (start, end) du <w:p> dont le texte commence par `marker`."""
+    rx = re.compile(r"<w:p\b[^>]*>(.*?)</w:p>", re.DOTALL)
+    rx_text = re.compile(r"<w:t[^>]*>([^<]*)</w:t>")
+    for m in rx.finditer(doc_xml):
+        body = m.group(1)
+        text = "".join(rx_text.findall(body))
+        if text.strip().startswith(marker):
+            return m.start(), m.end()
+    return None
+
+
+def find_all_heading1_blocks(doc_xml: str) -> list[tuple[int, int, str]]:
+    """
+    Retourne la liste des blocs (start, end, titre) de chaque Heading1
+    présent dans le document. Utile pour identifier les pièces.
+    """
+    rx = re.compile(r"<w:p\b[^>]*>(.*?)</w:p>", re.DOTALL)
+    rx_text = re.compile(r"<w:t[^>]*>([^<]*)</w:t>")
+    out = []
+    for m in rx.finditer(doc_xml):
+        body = m.group(1)
+        if 'w:val="Heading1"' not in body:
+            continue
+        text = "".join(rx_text.findall(body)).strip()
+        out.append((m.start(), m.end(), text))
+    return out
+
+
+def split_pieces_by_heading1(doc_xml: str, start_offset: int,
+                              end_offset: int) -> list[dict]:
+    """
+    Découpe la zone [start_offset, end_offset] en blocs de pièces, chaque
+    bloc allant d'un Heading1 inclus jusqu'au prochain Heading1 (ou à
+    end_offset).
+
+    Retourne une liste de :
+        {"titre": str, "start": int, "end": int, "xml": str}
+    """
+    headings = find_all_heading1_blocks(doc_xml)
+    headings = [h for h in headings if start_offset <= h[0] < end_offset]
+    blocks = []
+    for i, (h_start, h_end, titre) in enumerate(headings):
+        block_end = headings[i + 1][0] if i + 1 < len(headings) else end_offset
+        blocks.append({
+            "titre": titre,
+            "start": h_start,
+            "end": block_end,
+            "xml": doc_xml[h_start:block_end],
+        })
+    return blocks
+
+
+def extract_photos_xml(piece_xml: str) -> str:
+    """
+    Extrait UNIQUEMENT les paragraphes contenant des photos (avec leur
+    légende horodatée). Ce sont les <w:p> qui contiennent un <w:drawing>
+    ou les paragraphes de légende (`Photographie n° X - ...`).
+    """
+    rx_para = re.compile(r"<w:p\b[^>]*>.*?</w:p>", re.DOTALL)
+    rx_text = re.compile(r"<w:t[^>]*>([^<]*)</w:t>")
+    out = []
+    for m in rx_para.finditer(piece_xml):
+        body = m.group(0)
+        text = "".join(rx_text.findall(body)).strip()
+        has_drawing = "<w:drawing" in body
+        is_photo_legend = re.match(r"^Photographie\s+n[°º]", text)
+        if has_drawing or is_photo_legend:
+            out.append(body)
+    return "".join(out)
+
+
+def normalize_piece_title(piece_xml: str, new_title: str) -> str:
+    """Remplace le titre Heading1 du bloc par le nouveau."""
+    rx = re.compile(
+        r'(<w:p\b[^>]*>(?:(?!</w:p>).)*?w:val="Heading1"(?:(?!</w:p>).)*?</w:p>)',
+        re.DOTALL,
+    )
+    new_heading = p_heading1(new_title)
+    return rx.sub(new_heading, piece_xml, count=1)
+
+
+def order_pieces(pieces: list[dict]) -> list[dict]:
+    """Trie les pièces selon PIECE_ORDER. Pièces inconnues → en fin."""
+    rank = {normalize_for_match(p): i for i, p in enumerate(PIECE_ORDER)}
+
+    def key(piece):
+        n = normalize_for_match(piece.get("titre_normalise", piece.get("titre_brut", "")))
+        return rank.get(n, 999)
+
+    return sorted(pieces, key=key)
+
+
+def normalize_for_match(s: str) -> str:
+    return re.sub(r"\s+", " ", s.strip().lower())
+
+
+# --------------------------------------------------------------------------
+#  Fonction principale
+# --------------------------------------------------------------------------
+
+def build(src_docx: Path, enriched_json: Path, answers_json: Path,
+          out_docx: Path) -> int:
+    # 1. Charger les inputs
+    with enriched_json.open(encoding="utf-8") as f:
+        enriched = json.load(f)
+    with answers_json.open(encoding="utf-8") as f:
+        answers = json.load(f)
+
+    # 2. Lire le .docx source
+    with zipfile.ZipFile(src_docx) as z:
+        doc_xml = z.read("word/document.xml").decode("utf-8")
+        settings_xml = z.read("word/settings.xml").decode("utf-8")
+        names = z.namelist()
+
+    # 3. Localiser les marqueurs
+    expose_pos = find_paragraph_index_by_text(doc_xml, MARK_EXPOSE)
+    deferant_pos = find_paragraph_index_by_text(doc_xml, MARK_DEFERANT)
+    constat_pos = find_paragraph_index_by_text(doc_xml, MARK_CONSTAT)
+    conclusion_pos = find_paragraph_index_by_text(doc_xml, MARK_CONCLUSION)
+
+    if not (expose_pos and deferant_pos and constat_pos):
+        raise ValueError(
+            "Marqueurs structurels manquants dans le brouillon. "
+            "Impossible de construire le document final."
+        )
+
+    # 4. Remplacer le bloc "introduction de la requête" entre EXPOSE et DEFERANT
+    intro_xml = build_intro(answers, enriched)
+    # On garde le paragraphe MARK_EXPOSE et MARK_DEFERANT, on remplace ce qui
+    # est entre les deux.
+    new_doc_xml = (
+        doc_xml[: expose_pos[1]]
+        + intro_xml
+        + doc_xml[deferant_pos[0] :]
+    )
+
+    # 5. Re-localiser les marqueurs dans le doc modifié
+    constat_pos = find_paragraph_index_by_text(new_doc_xml, MARK_CONSTAT)
+    conclusion_pos = find_paragraph_index_by_text(new_doc_xml, MARK_CONCLUSION)
+    if not constat_pos:
+        raise ValueError("Marqueur CONSTAT introuvable après réécriture intro.")
+
+    end_constatations = conclusion_pos[0] if conclusion_pos else len(new_doc_xml)
+
+    # 6. Découper la zone des constatations en blocs (un par Heading1 source)
+    src_blocks = split_pieces_by_heading1(
+        new_doc_xml, constat_pos[1], end_constatations
+    )
+    # Indexer par titre normalisé (pour rapatrier les photos depuis la source)
+    src_by_title = {}
+    for b in src_blocks:
+        key = normalize_for_match(b["titre"])
+        # On garde le bloc qui a le plus de contenu (cas Cuisine en doublon)
+        if key not in src_by_title or len(b["xml"]) > len(src_by_title[key]["xml"]):
+            src_by_title[key] = b
+
+    # 7. Construire la nouvelle zone de constatations
+    pieces_enriched = enriched.get("pieces", [])
+    # Filtrer les pièces vides (doublons)
+    pieces_enriched = [
+        p for p in pieces_enriched
+        if (p.get("sol") or p.get("murs") or p.get("plafond")
+            or p.get("equipement") or p.get("photos") or p.get("prose_brute"))
+    ]
+    pieces_ordered = order_pieces(pieces_enriched)
+
+    new_zone = build_convocation(answers)
+    for piece in pieces_ordered:
+        # Bloc structuré (titre + rubriques)
+        new_zone += build_piece(piece)
+        # Photos depuis le source (préserver les drawings + hyperlinks)
+        src_block = src_by_title.get(
+            normalize_for_match(piece.get("titre_brut", piece.get("titre_normalise", "")))
+        )
+        if src_block:
+            photos_xml = extract_photos_xml(src_block["xml"])
+            new_zone += photos_xml
+
+    # 8. Sections terminales
+    compteurs = enriched.get("compteurs", {})
+    if compteurs:
+        new_zone += build_compteurs(compteurs)
+        # Récupérer les photos des compteurs depuis la source
+        src_compteurs = src_by_title.get("compteurs")
+        if src_compteurs:
+            new_zone += extract_photos_xml(src_compteurs["xml"])
+
+    boite = enriched.get("boite_aux_lettres", "")
+    if boite:
+        new_zone += build_boite(boite)
+        src_boite = (src_by_title.get("boîte aux lettres")
+                     or src_by_title.get("boite aux lettres")
+                     or src_by_title.get("votre lettre"))
+        if src_boite:
+            new_zone += extract_photos_xml(src_boite["xml"])
+
+    cles = enriched.get("cles", [])
+    if cles:
+        new_zone += build_cles(cles)
+
+    # 9. Conclusion : on garde celle d'origine (elle est dans le brouillon)
+    # → on ne génère pas de nouvelle conclusion pour éviter le doublon avec
+    # la signature d'origine.
+
+    # 10. Assembler le document final (la conclusion + signature d'origine
+    # sont conservées dans new_doc_xml[end_constatations:])
+    final_doc_xml = (
+        new_doc_xml[: constat_pos[1]]
+        + new_zone
+        + new_doc_xml[end_constatations:]
+    )
+
+    # 11. Activer la mise à jour du sommaire
+    if "<w:updateFields" not in settings_xml:
+        settings_xml = settings_xml.replace(
+            "<w:settings ",
+            '<w:settings ',
+            1,
+        )
+        # Insérer juste avant </w:settings>
+        settings_xml = settings_xml.replace(
+            "</w:settings>",
+            '<w:updateFields w:val="true"/></w:settings>',
+        )
+
+    # Marquer les TOC comme dirty
+    final_doc_xml = re.sub(
+        r'(<w:fldChar w:fldCharType="begin"\s*/>)',
+        r'<w:fldChar w:fldCharType="begin" w:dirty="true"/>',
+        final_doc_xml,
+        count=1,
+    )
+
+    # 12. Repaqueter le .docx
+    out_docx.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(src_docx) as zin, zipfile.ZipFile(out_docx, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.namelist():
+            if item == "word/document.xml":
+                zout.writestr(item, final_doc_xml)
+            elif item == "word/settings.xml":
+                zout.writestr(item, settings_xml)
+            else:
+                zout.writestr(item, zin.read(item))
+
+    print(f"OK — document écrit : {out_docx}")
+    print(f"     {len(pieces_ordered)} pièces, "
+          f"{sum(len(p.get('photos', [])) for p in pieces_ordered)} photos.")
+    return 0
+
+
+# --------------------------------------------------------------------------
+#  CLI
+# --------------------------------------------------------------------------
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--src", type=Path, required=True, help="Brouillon .docx")
+    parser.add_argument("--enriched", type=Path, required=True,
+                        help="JSON enrichi (rubriques par pièce)")
+    parser.add_argument("--answers", type=Path, required=True,
+                        help="JSON des réponses interactives")
+    parser.add_argument("--out", type=Path, required=True,
+                        help="Chemin du .docx de sortie")
+    args = parser.parse_args()
+
+    try:
+        return build(args.src, args.enriched, args.answers, args.out)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"ERREUR : {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

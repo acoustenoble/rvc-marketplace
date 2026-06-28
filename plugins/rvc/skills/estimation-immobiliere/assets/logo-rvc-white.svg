@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 260" font-family="Georgia,'Times New Roman',serif">
+  <!-- Logo de SECOURS (fond foncé) — remplacer par le logo officiel RVC blanc (logo-rvc-white.png) -->
+  <rect x="18" y="20" width="26" height="150" fill="#B8975A"/>
+  <text x="40" y="150" font-size="150" font-weight="700" fill="#ffffff" letter-spacing="6">RVC</text>
+  <text x="60" y="225" font-size="46" font-weight="600" fill="#ffffff" letter-spacing="14" font-family="Arial,sans-serif">IMMOBILIER</text>
+</svg>
