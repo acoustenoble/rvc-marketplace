@@ -1,0 +1,14 @@
+{
+     "name": "rvc-marketplace",
+     "owner": { "name": "RVC" },
+     "metadata": {
+       "description": "Marketplace interne RVC : plugins metier pour le commissaire de justice et l'immobilier."
+     },
+     "plugins": [
+       {
+         "name": "rvc",
+         "source": "./plugins/rvc",
+         "description": "Outils metier RVC : constats, etats des lieux, inventaires, drone, affichage, mandats de gestion, estimations, ecritures comptables, candidatures locataires."
+       }
+     ]
+   }
